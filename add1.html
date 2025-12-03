@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Task Automation Portal</title>
+  <!-- Tailwind CDN (for demo / classroom use). For production, compile Tailwind. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* small custom CSS for visuals not covered by Tailwind */
+    .priority-low { --tw-bg-opacity: 1; background-color: rgba(34,197,94,var(--tw-bg-opacity)); }
+    .priority-medium { --tw-bg-opacity: 1; background-color: rgba(250,204,21,var(--tw-bg-opacity)); }
+    .priority-high { --tw-bg-opacity: 1; background-color: rgba(239,68,68,var(--tw-bg-opacity)); }
+    .task-card { transition: transform .12s ease, box-shadow .12s ease; }
+    .task-card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.08); }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold">Task Automation Portal</h1>
+      <div class="text-sm text-slate-600">Local demo • Uses DOM manipulation + localStorage</div>
+    </header>
+
+    <section class="grid md:grid-cols-3 gap-6">
+      <!-- Form -->
+      <form id="taskForm" class="md:col-span-1 bg-white p-4 rounded-lg shadow-sm">
+        <h2 class="text-lg font-medium mb-3">Create / Update Task</h2>
+        <input type="hidden" id="taskId" />
+
+        <label class="block mb-2 text-sm">Title <span class="text-red-500">*</span></label>
+        <input id="title" required class="w-full px-3 py-2 border rounded mb-3" placeholder="Buy groceries" />
+
+        <label class="block mb-2 text-sm">Description</label>
+        <textarea id="description" rows="3" class="w-full px-3 py-2 border rounded mb-3" placeholder="Details (optional)"></textarea>
+
+        <label class="block mb-2 text-sm">Due date</label>
+        <input type="date" id="dueDate" class="w-full px-3 py-2 border rounded mb-3" />
+
+        <label class="block mb-2 text-sm">Priority</label>
+        <select id="priority" class="w-full px-3 py-2 border rounded mb-3">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
+
+        <div class="flex gap-2">
+          <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700" id="saveBtn">Save Task</button>
+          <button type="button" id="clearForm" class="px-4 py-2 border rounded">Clear</button>
+        </div>
+      </form>
+
+      <!-- Controls -->
+      <div class="md:col-span-2 space-y-4">
+        <div class="bg-white p-4 rounded-lg shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <input id="search" type="search" placeholder="Search tasks..." class="px-3 py-2 border rounded w-64" />
+            <select id="filterPriority" class="px-3 py-2 border rounded">
+              <option value="all">All priorities</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <select id="sortBy" class="px-3 py-2 border rounded">
+              <option value="created_desc">Newest</option>
+              <option value="created_asc">Oldest</option>
+              <option value="due_asc">Due soon</option>
+              <option value="due_desc">Due late</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button id="exportBtn" class="px-3 py-2 border rounded">Export JSON</button>
+            <input id="importFile" type="file" accept="application/json" class="hidden" />
+            <button id="importBtn" class="px-3 py-2 border rounded">Import JSON</button>
+            <button id="clearAll" class="px-3 py-2 bg-red-500 text-white rounded">Clear All</button>
+          </div>
+        </div>
+
+        <!-- Task list -->
+        <div id="taskList" class="grid gap-3"></div>
+      </div>
+    </section>
+
+    <footer class="mt-6 text-sm text-slate-500">Tip: This demo stores tasks in <code>localStorage</code>. Use the export/import buttons to transfer data.</footer>
+  </div>
+
+  <!-- Modal for confirm delete -->
+  <div id="confirmModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center p-4">
+    <div class="bg-white rounded-lg p-6 w-full max-w-md">
+      <h3 class="text-lg font-semibold mb-3">Confirm delete</h3>
+      <p class="mb-4">Are you sure you want to delete this task? This action cannot be undone.</p>
+      <div class="flex justify-end gap-2">
+        <button id="cancelDelete" class="px-4 py-2 border rounded">Cancel</button>
+        <button id="confirmDelete" class="px-4 py-2 bg-red-600 text-white rounded">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * Task Automation Portal - JS (vanilla)
+     * Features implemented:
+     * - Create, update, delete tasks
+     * - localStorage persistence
+     * - Search filtering, priority filter, sorting
+     * - Priority tagging visuals
+     * - Export / Import JSON
+     * - DOM manipulation for dynamic list
+     */
+
+    // --- Data Layer ---
+    const STORAGE_KEY = 'task_portal_tasks_v1';
+
+    function loadTasks() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        console.error('Failed to load tasks', e);
+        return [];
+      }
+    }
+
+    function saveTasks(tasks) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    }
+
+    // --- Utility ---
+    function uid() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+    }
+
+    function priorityClass(priority){
+      if(priority === 'high') return 'priority-high text-white';
+      if(priority === 'medium') return 'priority-medium text-black';
+      return 'priority-low text-white';
+    }
+
+    // --- App State ---
+    let tasks = loadTasks();
+    let deleteCandidateId = null;
+
+    // --- DOM refs ---
+    const taskForm = document.getElementById('taskForm');
+    const titleInput = document.getElementById('title');
+    const descInput = document.getElementById('description');
+    const dueInput = document.getElementById('dueDate');
+    const prioritySelect = document.getElementById('priority');
+    const taskIdInput = document.getElementById('taskId');
+    const taskList = document.getElementById('taskList');
+    const searchInput = document.getElementById('search');
+    const filterPriority = document.getElementById('filterPriority');
+    const sortBySelect = document.getElementById('sortBy');
+    const clearFormBtn = document.getElementById('clearForm');
+    const clearAllBtn = document.getElementById('clearAll');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const importFile = document.getElementById('importFile');
+    const confirmModal = document.getElementById('confirmModal');
+    const cancelDelete = document.getElementById('cancelDelete');
+    const confirmDelete = document.getElementById('confirmDelete');
+
+    // --- Render ---
+    function renderTasks(){
+      // Build filtered + sorted list
+      const q = searchInput.value.trim().toLowerCase();
+      let filtered = tasks.filter(t => {
+        if(filterPriority.value !== 'all' && t.priority !== filterPriority.value) return false;
+        if(!q) return true;
+        return (t.title || '').toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
+      });
+
+      const sortKey = sortBySelect.value;
+      filtered.sort((a,b)=>{
+        if(sortKey === 'created_desc') return b.createdAt - a.createdAt;
+        if(sortKey === 'created_asc') return a.createdAt - b.createdAt;
+        if(sortKey === 'due_asc') return (a.dueDate||0) - (b.dueDate||0);
+        if(sortKey === 'due_desc') return (b.dueDate||0) - (a.dueDate||0);
+        return 0;
+      });
+
+      taskList.innerHTML = '';
+      if(filtered.length === 0){
+        taskList.innerHTML = '<div class="bg-white p-6 rounded text-slate-500">No tasks found — add a new task to get started.</div>';
+        return;
+      }
+
+      filtered.forEach(t => {
+        const dueText = t.dueDate ? new Date(t.dueDate).toLocaleDateString() : 'No due date';
+        const card = document.createElement('article');
+        card.className = 'task-card bg-white p-4 rounded-lg flex items-start gap-4';
+        card.setAttribute('data-id', t.id);
+        card.innerHTML = `
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <h3 class="font-semibold">${escapeHtml(t.title)}</h3>
+              <div class="text-sm text-slate-500">${escapeHtml(dueText)}</div>
+            </div>
+            <p class="text-sm mt-2 text-slate-600">${escapeHtml(t.description || '')}</p>
+            <div class="mt-3 flex items-center gap-2">
+              <span class="inline-flex items-center px-2 py-1 text-xs rounded ${priorityClass(t.priority)}">${t.priority.toUpperCase()}</span>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-2">
+            <button class="editBtn px-3 py-1 border rounded text-sm">Edit</button>
+            <button class="deleteBtn px-3 py-1 border rounded text-sm text-red-600">Delete</button>
+          </div>
+        `;
+
+        // Attach events
+        card.querySelector('.editBtn').addEventListener('click', ()=> startEditTask(t.id));
+        card.querySelector('.deleteBtn').addEventListener('click', ()=> askDeleteTask(t.id));
+
+        taskList.appendChild(card);
+      });
+    }
+
+    // --- Escaping ---
+    function escapeHtml(s){
+      if(!s) return '';
+      return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('\"','&quot;');
+    }
+
+    // --- CRUD ---
+    taskForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const title = titleInput.value.trim();
+      if(!title) return alert('Title required');
+      const description = descInput.value.trim();
+      const dueDate = dueInput.value || null;
+      const priority = prioritySelect.value;
+      const existingId = taskIdInput.value || null;
+
+      if(existingId){
+        // Update
+        const idx = tasks.findIndex(t=>t.id===existingId);
+        if(idx !== -1){
+          tasks[idx] = { ...tasks[idx], title, description, dueDate, priority };
+          saveTasks(tasks);
+          resetForm();
+          renderTasks();
+          return;
+        }
+      }
+
+      const newTask = { id: uid(), title, description, dueDate, priority, createdAt: Date.now() };
+      tasks.push(newTask);
+      saveTasks(tasks);
+      resetForm();
+      renderTasks();
+    });
+
+    function startEditTask(id){
+      const t = tasks.find(x=>x.id===id);
+      if(!t) return;
+      taskIdInput.value = t.id;
+      titleInput.value = t.title;
+      descInput.value = t.description || '';
+      dueInput.value = t.dueDate || '';
+      prioritySelect.value = t.priority || 'medium';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      titleInput.focus();
+    }
+
+    function askDeleteTask(id){
+      deleteCandidateId = id;
+      confirmModal.classList.remove('hidden');
+      confirmModal.classList.add('flex');
+    }
+
+    cancelDelete.addEventListener('click', ()=>{
+      deleteCandidateId = null;
+      confirmModal.classList.add('hidden');
+      confirmModal.classList.remove('flex');
+    });
+
+    confirmDelete.addEventListener('click', ()=>{
+      if(!deleteCandidateId) return;
+      tasks = tasks.filter(t=>t.id !== deleteCandidateId);
+      saveTasks(tasks);
+      deleteCandidateId = null;
+      confirmModal.classList.add('hidden');
+      confirmModal.classList.remove('flex');
+      renderTasks();
+    });
+
+    // --- Helpers ---
+    function resetForm(){
+      taskForm.reset();
+      taskIdInput.value = '';
+    }
+
+    clearFormBtn.addEventListener('click', resetForm);
+
+    // --- Bulk actions ---
+    clearAllBtn.addEventListener('click', ()=>{
+      if(!confirm('Clear all tasks from localStorage?')) return;
+      tasks = [];
+      saveTasks(tasks);
+      renderTasks();
+    });
+
+    // --- Search / filters ---
+    [searchInput, filterPriority, sortBySelect].forEach(el => el.addEventListener('input', renderTasks));
+
+    // --- Export / Import ---
+    exportBtn.addEventListener('click', ()=>{
+      const data = JSON.stringify(tasks, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tasks-export.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    importBtn.addEventListener('click', ()=> importFile.click());
+    importFile.addEventListener('change', async (ev)=>{
+      const f = ev.target.files[0];
+      if(!f) return;
+      try{
+        const txt = await f.text();
+        const parsed = JSON.parse(txt);
+        if(!Array.isArray(parsed)) throw new Error('Invalid file format');
+        // Basic validation
+        parsed.forEach(p=>{ if(!p.id) p.id = uid(); if(!p.createdAt) p.createdAt = Date.now(); });
+        tasks = parsed;
+        saveTasks(tasks);
+        renderTasks();
+        alert('Import successful');
+      }catch(err){
+        console.error(err);
+        alert('Failed to import: ' + err.message);
+      } finally { importFile.value = ''; }
+    });
+
+    // --- Init ---
+    renderTasks();
+
+    // --- Accessibility / keyboard shortcuts (small) ---
+    document.addEventListener('keydown', (e)=>{
+      if(e.key === 'n' && (e.ctrlKey || e.metaKey)){
+        e.preventDefault();
+        titleInput.focus();
+      }
+    });
+
+    // Expose for debugging in console
+    window.taskPortal = { loadTasks, saveTasks, renderTasks };
+  </script>
+</body>
+</html>
